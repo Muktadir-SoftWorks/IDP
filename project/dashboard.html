@@ -31,6 +31,8 @@
                 <button class="nav-tab" data-tab="my-donations">My Donations</button>
                 <button class="nav-tab" data-tab="applications">My Applications</button>
                 <button class="nav-tab" data-tab="adoptions">My Adoptions</button>
+                <button class="nav-tab admin-only" data-tab="admin-users" style="display: none;">Admin: Users</button>
+                <button class="nav-tab admin-only" data-tab="admin-pets" style="display: none;">Admin: All Pets</button>
             </div>
         </div>
     </nav>
@@ -137,6 +139,28 @@
                     </div>
                 </div>
             </div>
+
+            <!-- Admin Users Tab -->
+            <div id="admin-users-tab" class="tab-content admin-only" style="display: none;">
+                <h2>Manage Users</h2>
+                <div id="admin-users-grid" class="admin-users-grid">
+                    <div class="loading">
+                        <div class="spinner"></div>
+                        <p>Loading users...</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Admin Pets Tab -->
+            <div id="admin-pets-tab" class="tab-content admin-only" style="display: none;">
+                <h2>Manage All Pets</h2>
+                <div id="admin-pets-grid" class="admin-pets-grid">
+                    <div class="loading">
+                        <div class="spinner"></div>
+                        <p>Loading pets...</p>
+                    </div>
+                </div>
+            </div>
         </div>
     </main>
 
@@ -172,6 +196,12 @@
                 if (response.ok) {
                     currentUser = await response.json();
                     document.getElementById('user-name').textContent = `Welcome, ${currentUser.name}`;
+
+                    if (currentUser.is_admin) {
+                        document.querySelectorAll('.admin-only').forEach(el => {
+                            el.style.display = '';
+                        });
+                    }
                 } else {
                     window.location.href = '/login.html';
                 }
@@ -202,6 +232,10 @@
                 loadMyApplications();
             } else if (tabName === 'adoptions') {
                 loadMyAdoptions();
+            } else if (tabName === 'admin-users') {
+                loadAdminUsers();
+            } else if (tabName === 'admin-pets') {
+                loadAdminPets();
             }
         }
 
@@ -402,18 +436,205 @@
             messageEl.textContent = text;
             messageEl.className = `message ${type}`;
             messageEl.style.display = 'block';
-            
+
             setTimeout(() => {
                 messageEl.style.display = 'none';
             }, 5000);
         }
-        
+
+        async function loadAdminUsers() {
+            try {
+                const response = await fetch('/api/admin/users');
+                if (!response.ok) {
+                    showMessage('Unauthorized access', 'error');
+                    return;
+                }
+                const users = await response.json();
+                displayAdminUsers(users);
+            } catch (error) {
+                showMessage('Failed to load users', 'error');
+            }
+        }
+
+        function displayAdminUsers(users) {
+            const container = document.getElementById('admin-users-grid');
+
+            if (users.length === 0) {
+                container.innerHTML = '<p class="no-data">No users found.</p>';
+                return;
+            }
+
+            container.innerHTML = `
+                <table class="admin-table">
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>Name</th>
+                            <th>Email</th>
+                            <th>Phone</th>
+                            <th>Admin</th>
+                            <th>Donated Pets</th>
+                            <th>Adoptions</th>
+                            <th>Joined</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${users.map(user => `
+                            <tr>
+                                <td>${user.id}</td>
+                                <td>${user.name}</td>
+                                <td>${user.email}</td>
+                                <td>${user.phone}</td>
+                                <td>${user.is_admin ? 'Yes' : 'No'}</td>
+                                <td>${user.donated_pets}</td>
+                                <td>${user.adoptions}</td>
+                                <td>${new Date(user.created_at).toLocaleDateString()}</td>
+                                <td>
+                                    ${user.id !== currentUser.id ? `
+                                        <button onclick="deleteUser(${user.id}, '${user.name}')" class="delete-btn">
+                                            Delete
+                                        </button>
+                                    ` : '<span style="color: #888;">You</span>'}
+                                </td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+            `;
+        }
+
+        async function deleteUser(userId, userName) {
+            if (!confirm(`Are you sure you want to delete user "${userName}"? This will also delete all their pets, applications, and adoptions.`)) {
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/admin/delete-user', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ user_id: userId })
+                });
+
+                const result = await response.json();
+
+                if (response.ok) {
+                    showMessage(result.message, 'success');
+                    loadAdminUsers();
+                } else {
+                    showMessage(result.error, 'error');
+                }
+            } catch (error) {
+                showMessage('Failed to delete user', 'error');
+            }
+        }
+
+        async function loadAdminPets() {
+            try {
+                const response = await fetch('/api/admin/all-pets');
+                if (!response.ok) {
+                    showMessage('Unauthorized access', 'error');
+                    return;
+                }
+                const pets = await response.json();
+                displayAdminPets(pets);
+            } catch (error) {
+                showMessage('Failed to load pets', 'error');
+            }
+        }
+
+        function displayAdminPets(pets) {
+            const container = document.getElementById('admin-pets-grid');
+
+            if (pets.length === 0) {
+                container.innerHTML = '<p class="no-data">No pets found.</p>';
+                return;
+            }
+
+            container.innerHTML = `
+                <table class="admin-table">
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>Image</th>
+                            <th>Name</th>
+                            <th>Species</th>
+                            <th>Breed</th>
+                            <th>Age</th>
+                            <th>Price</th>
+                            <th>Location</th>
+                            <th>Status</th>
+                            <th>Donor</th>
+                            <th>Posted</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${pets.map(pet => `
+                            <tr>
+                                <td>${pet.id}</td>
+                                <td><img src="${pet.image}" alt="${pet.name}" style="width: 50px; height: 50px; object-fit: cover; border-radius: 4px;"></td>
+                                <td>${pet.name}</td>
+                                <td>${pet.species}</td>
+                                <td>${pet.breed}</td>
+                                <td>${pet.age}y</td>
+                                <td>${pet.price === 0 ? 'Free' : pet.price + ' BDT'}</td>
+                                <td>${pet.location}</td>
+                                <td><span class="status-badge status-${pet.status}">${pet.status}</span></td>
+                                <td>
+                                    <div>${pet.donor_name}</div>
+                                    <small style="color: #888;">${pet.donor_email}</small>
+                                </td>
+                                <td>${new Date(pet.created_at).toLocaleDateString()}</td>
+                                <td>
+                                    <button onclick="deletePet(${pet.id}, '${pet.name}')" class="delete-btn">
+                                        Delete
+                                    </button>
+                                </td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+            `;
+        }
+
+        async function deletePet(petId, petName) {
+            if (!confirm(`Are you sure you want to delete pet "${petName}"? This will also delete all applications and adoptions for this pet.`)) {
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/admin/delete-pet', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ pet_id: petId })
+                });
+
+                const result = await response.json();
+
+                if (response.ok) {
+                    showMessage(result.message, 'success');
+                    loadAdminPets();
+                } else {
+                    showMessage(result.error, 'error');
+                }
+            } catch (error) {
+                showMessage('Failed to delete pet', 'error');
+            }
+        }
+
         // Make functions globally available
         window.showApplications = showApplications;
         window.approveApplication = approveApplication;
         window.removeApplication = removeApplication;
         window.removeDonation = removeDonation;
         window.removeAdoption = removeAdoption;
+        window.deleteUser = deleteUser;
+        window.deletePet = deletePet;
     </script>
 </body>
 </html>

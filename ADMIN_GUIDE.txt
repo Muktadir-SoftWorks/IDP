@@ -1,0 +1,49 @@
+Pet Adoption Center - Admin Guide
+================================
+
+ADMIN LOGIN CREDENTIALS
+-----------------------
+Email: admin@petcenter.com
+Password: password123
+
+ADMIN FEATURES
+--------------
+
+1. Access Admin Dashboard
+   - Login with admin credentials
+   - Navigate to dashboard.html
+   - You will see two additional tabs: "Admin: Users" and "Admin: All Pets"
+
+2. Manage Users (Admin: Users Tab)
+   - View all registered users with their details:
+     * User ID, Name, Email, Phone
+     * Admin status
+     * Number of donated pets
+     * Number of adoptions
+     * Join date
+   - Delete any user (except yourself)
+   - When deleting a user, all their pets, applications, and adoptions are removed
+
+3. Manage Pets (Admin: All Pets Tab)
+   - View all pets in the system with details:
+     * Pet ID, Image, Name, Species, Breed
+     * Age, Price, Location, Status
+     * Donor information (name and email)
+     * Post date
+   - Delete any pet listing
+   - When deleting a pet, all applications and adoptions for that pet are removed
+
+SECURITY
+--------
+- Only users with is_admin = 1 can access admin features
+- Admin tabs are hidden for regular users
+- API endpoints check admin status before allowing operations
+- Admin cannot delete their own account
+
+MAKING NEW ADMINS
+-----------------
+To make another user an admin, you need to update the database directly:
+1. Stop the server
+2. Open pets.db with a SQLite tool
+3. Run: UPDATE users SET is_admin = 1 WHERE email = 'user@example.com'
+4. Restart the server

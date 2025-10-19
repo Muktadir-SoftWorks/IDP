@@ -94,6 +94,10 @@ class PetAdoptionHandler(BaseHTTPRequestHandler):
             self.get_applications()
         elif path == '/api/my-donations':
             self.get_my_donations()
+        elif path == '/api/admin/users':
+            self.get_all_users()
+        elif path == '/api/admin/all-pets':
+            self.get_all_pets()
         elif path.startswith('/uploads/'):
             self.serve_upload(path)
         else:
@@ -121,6 +125,10 @@ class PetAdoptionHandler(BaseHTTPRequestHandler):
             self.handle_remove_donation()
         elif path == '/api/remove-adoption':
             self.handle_remove_adoption()
+        elif path == '/api/admin/delete-user':
+            self.handle_delete_user()
+        elif path == '/api/admin/delete-pet':
+            self.handle_delete_pet()
         else:
             self.send_error(404)
 
@@ -172,19 +180,19 @@ class PetAdoptionHandler(BaseHTTPRequestHandler):
         session_id = self.get_session_id()
         if not session_id:
             return None
-        
+
         conn = sqlite3.connect('pets.db')
         cursor = conn.cursor()
         cursor.execute('''
-            SELECT u.id, u.name, u.email FROM users u
+            SELECT u.id, u.name, u.email, u.is_admin FROM users u
             JOIN sessions s ON u.id = s.user_id
             WHERE s.session_id = ? AND s.expires_at > ?
         ''', (session_id, datetime.now()))
         result = cursor.fetchone()
         conn.close()
-        
+
         if result:
-            return {'id': result[0], 'name': result[1], 'email': result[2]}
+            return {'id': result[0], 'name': result[1], 'email': result[2], 'is_admin': result[3]}
         return None
 
     def send_json(self, data, status=200):
@@ -655,6 +663,213 @@ class PetAdoptionHandler(BaseHTTPRequestHandler):
         finally:
             conn.close()
 
+    def handle_remove_application(self):
+        user = self.get_current_user()
+        if not user:
+            self.send_json({'error': 'Not authenticated'}, 401)
+            return
+
+        content_length = int(self.headers['Content-Length'])
+        post_data = self.rfile.read(content_length)
+        data = json.loads(post_data.decode('utf-8'))
+
+        application_id = data.get('application_id')
+
+        conn = sqlite3.connect('pets.db')
+        cursor = conn.cursor()
+
+        cursor.execute('DELETE FROM adoption_applications WHERE id = ? AND applicant_id = ?',
+                      (application_id, user['id']))
+        conn.commit()
+        conn.close()
+
+        self.send_json({'message': 'Application removed successfully'})
+
+    def handle_remove_donation(self):
+        user = self.get_current_user()
+        if not user:
+            self.send_json({'error': 'Not authenticated'}, 401)
+            return
+
+        content_length = int(self.headers['Content-Length'])
+        post_data = self.rfile.read(content_length)
+        data = json.loads(post_data.decode('utf-8'))
+
+        pet_id = data.get('pet_id')
+
+        conn = sqlite3.connect('pets.db')
+        cursor = conn.cursor()
+
+        cursor.execute('DELETE FROM pets WHERE id = ? AND donated_by = ? AND status = "available"',
+                      (pet_id, user['id']))
+        conn.commit()
+        conn.close()
+
+        self.send_json({'message': 'Donation removed successfully'})
+
+    def handle_remove_adoption(self):
+        user = self.get_current_user()
+        if not user:
+            self.send_json({'error': 'Not authenticated'}, 401)
+            return
+
+        content_length = int(self.headers['Content-Length'])
+        post_data = self.rfile.read(content_length)
+        data = json.loads(post_data.decode('utf-8'))
+
+        adoption_id = data.get('adoption_id')
+
+        conn = sqlite3.connect('pets.db')
+        cursor = conn.cursor()
+
+        cursor.execute('SELECT pet_id FROM adoptions WHERE id = ? AND adopter_id = ?',
+                      (adoption_id, user['id']))
+        result = cursor.fetchone()
+
+        if result:
+            pet_id = result[0]
+            cursor.execute('UPDATE pets SET status = "available" WHERE id = ?', (pet_id,))
+            cursor.execute('DELETE FROM adoptions WHERE id = ?', (adoption_id,))
+            conn.commit()
+
+        conn.close()
+        self.send_json({'message': 'Adoption cancelled successfully'})
+
+    def get_all_users(self):
+        user = self.get_current_user()
+        if not user or not user.get('is_admin'):
+            self.send_json({'error': 'Unauthorized'}, 403)
+            return
+
+        conn = sqlite3.connect('pets.db')
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT u.id, u.name, u.email, u.phone, u.is_admin, u.created_at,
+                   COUNT(DISTINCT p.id) as donated_pets,
+                   COUNT(DISTINCT a.id) as adoptions
+            FROM users u
+            LEFT JOIN pets p ON u.id = p.donated_by
+            LEFT JOIN adoptions a ON u.id = a.adopter_id
+            GROUP BY u.id
+            ORDER BY u.created_at DESC
+        ''')
+
+        users = []
+        for row in cursor.fetchall():
+            users.append({
+                'id': row[0],
+                'name': row[1],
+                'email': row[2],
+                'phone': row[3],
+                'is_admin': row[4],
+                'created_at': row[5],
+                'donated_pets': row[6],
+                'adoptions': row[7]
+            })
+
+        conn.close()
+        self.send_json(users)
+
+    def get_all_pets(self):
+        user = self.get_current_user()
+        if not user or not user.get('is_admin'):
+            self.send_json({'error': 'Unauthorized'}, 403)
+            return
+
+        conn = sqlite3.connect('pets.db')
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT p.id, p.name, p.breed, p.age, p.species, p.image, p.bio,
+                   p.status, p.location, p.price, p.created_at,
+                   u.name as donor_name, u.email as donor_email
+            FROM pets p
+            JOIN users u ON p.donated_by = u.id
+            ORDER BY p.created_at DESC
+        ''')
+
+        pets = []
+        for row in cursor.fetchall():
+            pets.append({
+                'id': row[0],
+                'name': row[1],
+                'breed': row[2],
+                'age': row[3],
+                'species': row[4],
+                'image': row[5],
+                'bio': row[6],
+                'status': row[7],
+                'location': row[8],
+                'price': row[9],
+                'created_at': row[10],
+                'donor_name': row[11],
+                'donor_email': row[12]
+            })
+
+        conn.close()
+        self.send_json(pets)
+
+    def handle_delete_user(self):
+        user = self.get_current_user()
+        if not user or not user.get('is_admin'):
+            self.send_json({'error': 'Unauthorized'}, 403)
+            return
+
+        content_length = int(self.headers['Content-Length'])
+        post_data = self.rfile.read(content_length)
+        data = json.loads(post_data.decode('utf-8'))
+
+        user_id = data.get('user_id')
+
+        if user_id == user['id']:
+            self.send_json({'error': 'Cannot delete your own account'}, 400)
+            return
+
+        conn = sqlite3.connect('pets.db')
+        cursor = conn.cursor()
+
+        try:
+            cursor.execute('DELETE FROM sessions WHERE user_id = ?', (user_id,))
+            cursor.execute('DELETE FROM adoption_applications WHERE applicant_id = ? OR donor_id = ?',
+                          (user_id, user_id))
+            cursor.execute('DELETE FROM adoptions WHERE adopter_id = ? OR donor_id = ?',
+                          (user_id, user_id))
+            cursor.execute('DELETE FROM pets WHERE donated_by = ?', (user_id,))
+            cursor.execute('DELETE FROM users WHERE id = ?', (user_id,))
+            conn.commit()
+            self.send_json({'message': 'User deleted successfully'})
+        except Exception as e:
+            conn.rollback()
+            self.send_json({'error': 'Failed to delete user'}, 500)
+        finally:
+            conn.close()
+
+    def handle_delete_pet(self):
+        user = self.get_current_user()
+        if not user or not user.get('is_admin'):
+            self.send_json({'error': 'Unauthorized'}, 403)
+            return
+
+        content_length = int(self.headers['Content-Length'])
+        post_data = self.rfile.read(content_length)
+        data = json.loads(post_data.decode('utf-8'))
+
+        pet_id = data.get('pet_id')
+
+        conn = sqlite3.connect('pets.db')
+        cursor = conn.cursor()
+
+        try:
+            cursor.execute('DELETE FROM adoption_applications WHERE pet_id = ?', (pet_id,))
+            cursor.execute('DELETE FROM adoptions WHERE pet_id = ?', (pet_id,))
+            cursor.execute('DELETE FROM pets WHERE id = ?', (pet_id,))
+            conn.commit()
+            self.send_json({'message': 'Pet deleted successfully'})
+        except Exception as e:
+            conn.rollback()
+            self.send_json({'error': 'Failed to delete pet'}, 500)
+        finally:
+            conn.close()
+
 def init_database():
     conn = sqlite3.connect('pets.db')
     cursor = conn.cursor()
@@ -667,6 +882,7 @@ def init_database():
             email TEXT UNIQUE NOT NULL,
             password_hash TEXT NOT NULL,
             phone TEXT NOT NULL,
+            is_admin INTEGER DEFAULT 0,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     ''')
@@ -732,18 +948,25 @@ def init_database():
         )
     ''')
     
+    # Add is_admin column if it doesn't exist
+    cursor.execute("PRAGMA table_info(users)")
+    columns = [column[1] for column in cursor.fetchall()]
+    if 'is_admin' not in columns:
+        cursor.execute('ALTER TABLE users ADD COLUMN is_admin INTEGER DEFAULT 0')
+        conn.commit()
+
     # Insert sample data
     cursor.execute('SELECT COUNT(*) FROM users')
     if cursor.fetchone()[0] == 0:
-        # Create sample user
+        # Create sample admin user
         sample_password = hashlib.sha256('password123'.encode()).hexdigest()
         cursor.execute('''
-            INSERT INTO users (name, email, password_hash, phone)
-            VALUES (?, ?, ?, ?)
-        ''', ('Admin User', 'admin@petcenter.com', sample_password, '555-0123'))
-        
+            INSERT INTO users (name, email, password_hash, phone, is_admin)
+            VALUES (?, ?, ?, ?, ?)
+        ''', ('Admin User', 'admin@petcenter.com', sample_password, '555-0123', 1))
+
         admin_id = cursor.lastrowid
-        
+
         # Create sample pets
         sample_pets = [
             ('Buddy', 3, 'Golden Retriever', 'Dog', 'Friendly and energetic golden retriever who loves playing fetch and swimming. Great with kids!', 'https://images.pexels.com/photos/551628/pexels-photo-551628.jpeg?auto=compress&cs=tinysrgb&w=400', 'dhaka', 15000),
@@ -755,12 +978,16 @@ def init_database():
             ('Charlie', 1, 'Beagle', 'Dog', 'Young and playful Beagle puppy. Full of energy and loves to explore. Perfect for active families.', 'https://images.pexels.com/photos/1254140/pexels-photo-1254140.jpeg?auto=compress&cs=tinysrgb&w=400', 'chittagong', 10000),
             ('Shadow', 4, 'British Shorthair', 'Cat', 'Calm and dignified British Shorthair. Independent but affectionate. Great for apartment living.', 'https://images.pexels.com/photos/1741205/pexels-photo-1741205.jpeg?auto=compress&cs=tinysrgb&w=400', 'dhaka', 0)
         ]
-        
+
         for pet in sample_pets:
             cursor.execute('''
                 INSERT INTO pets (name, age, breed, species, bio, image, donated_by, status, created_at, location, price)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (*pet[:6], admin_id, 'available', datetime.now(), pet[6], pet[7]))
+    else:
+        # Update existing admin user
+        cursor.execute('UPDATE users SET is_admin = 1 WHERE email = ?', ('admin@petcenter.com',))
+        conn.commit()
     
     conn.commit()
     conn.close()
